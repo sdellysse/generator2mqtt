@@ -1,265 +1,158 @@
 import Mqtt from "async-mqtt";
-import { log, wait } from "./utils";
+import { log } from "./utils";
 
-process.env.MQTT_URL = "tcp://debian.lan:1883";
-process.env.MQTT_PREFIX = "generator2mqtt";
-
-const stateInTopics = <const>[
-  `esphome/generator-plug/status`,
-  `esphome/generator-plug/voltage`,
-  `esphome/generator-plug/wattage`,
-];
-type StateInTopic = typeof stateInTopics[number];
-
-const mappings = {
-  "sensor.generator_state": {
-    domain: "sensor",
-    config: {
-      device: {
-        identifiers: ["predator3500"],
-        manufacturer: "Harbor Freight",
-        model: "Predator 3500",
-        name: "Generator",
-      },
-    },
-    name: "Generator State",
-    unique_id: "generator_state",
+const config = {
+  mqtt: {
+    url: "tcp://debian.lan:1883",
   },
-  "sensor.generator_voltage": {
-    domain: "sensor",
-    config: {
-      device: {
-        identifiers: ["predator3500"],
-        manufacturer: "Harbor Freight",
-        model: "Predator 3500",
-        name: "Generator",
-      },
-      device_class: "voltage",
-      entity_category: "diagnostic",
-      state_class: "measurement",
-      unit_of_measurement: "V",
-    },
-    name: "Generator Voltage",
-    unique_id: "generator_voltage",
-  },
-  "sensor.generator_fan_wattage": {
-    domain: "sensor",
-    config: {
-      device: {
-        identifiers: ["predator3500"],
-        manufacturer: "Harbor Freight",
-        model: "Predator 3500",
-        name: "Generator",
-      },
-      device_class: "power",
-      entity_category: "diagnostic",
-      state_class: "measurement",
-      unit_of_measurement: "W",
-    },
-    name: "Generator Fan Wattage",
-    unique_id: "generator_fan_wattage",
-  },
-};
-type MappingName = keyof typeof mappings;
-type Mapping = typeof mappings[MappingName];
-
-const stateTopicOfMappingName = (
-  mqttPrefix: string,
-  mappingName: MappingName
-) => {
-  const mapping = mappings[mappingName];
-  return `${mqttPrefix}/${mapping.domain}/${mapping.unique_id}`;
-};
-
-const updateMqtt = async (
-  mqttConn: Mqtt.AsyncMqttClient,
-  mqttPrefix: string,
-  statesIn: Partial<Record<StateInTopic, string>>,
-  statesOut: Partial<Record<MappingName, string>>
-) => {
-  log.info(`running mqtt update`);
-
-  for (const [stateInNameString, mappingNameString] of Object.entries({
-    "esphome/generator-plug/voltage": "sensor.generator_voltage",
-    "esphome/generator-plug/wattage": "sensor.generator_fan_wattage",
-  })) {
-    const stateInName = <StateInTopic>stateInNameString;
-    const mappingName = <MappingName>mappingNameString;
-
-    if (statesOut[mappingName] !== statesIn[stateInName]) {
-      log.info(
-        `${mappingName} was: ${statesOut[mappingName]}; publishing: ${statesIn[stateInName]}`
-      );
-
-      statesOut[mappingName] = statesIn[stateInName];
-      await mqttConn.publish(
-        stateTopicOfMappingName(mqttPrefix, mappingName),
-        statesOut[mappingName] ?? "null",
-        { retain: false }
-      );
-    }
-  }
-
-  if (
-    statesIn[`esphome/generator-plug/status`] !== "online" ||
-    statesIn[`esphome/generator-plug/voltage`] === undefined ||
-    statesIn[`esphome/generator-plug/wattage`] === undefined
-  ) {
-    // log.info(
-    //   `generator_state = OFF: ${JSON.stringify({
-    //     status: statesIn[`esphome/generator-plug/status`] ?? null,
-    //     voltage: statesIn[`esphome/generator-plug/voltage`] ?? null,
-    //     wattage: statesIn[`esphome/generator-plug/wattage`] ?? null,
-    //   })}`
-    // );
-
-    if (statesOut["sensor.generator_state"] !== "OFF") {
-      log.info(
-        `${"sensor.generator_state"} was: ${
-          statesOut["sensor.generator_state"]
-        }; publishing: OFF`
-      );
-
-      statesOut["sensor.generator_state"] = "OFF";
-
-      await mqttConn.publish(
-        stateTopicOfMappingName(mqttPrefix, "sensor.generator_state"),
-        statesOut["sensor.generator_state"],
-        { retain: false }
-      );
-    }
-
-    return;
-  }
-
-  if (
-    statesIn[`esphome/generator-plug/status`] === "online" &&
-    statesIn[`esphome/generator-plug/voltage`] !== undefined &&
-    !isNaN(parseFloat(statesIn[`esphome/generator-plug/voltage`])) &&
-    parseFloat(statesIn[`esphome/generator-plug/voltage`]) >= 110 &&
-    statesIn[`esphome/generator-plug/wattage`] !== undefined &&
-    !isNaN(parseFloat(statesIn[`esphome/generator-plug/wattage`])) &&
-    parseFloat(statesIn[`esphome/generator-plug/wattage`]) >= 50
-  ) {
-    // log.info(
-    //   `generator_state = RUNNING: ${JSON.stringify({
-    //     status: statesIn[`esphome/generator-plug/status`] ?? null,
-    //     voltage: statesIn[`esphome/generator-plug/voltage`] ?? null,
-    //     wattage: statesIn[`esphome/generator-plug/wattage`] ?? null,
-    //   })}`
-    // );
-
-    if (statesOut["sensor.generator_state"] !== "RUNNING") {
-      log.info(
-        `${"sensor.generator_state"} was: ${
-          statesOut["sensor.generator_state"]
-        }; publishing: RUNNING`
-      );
-
-      statesOut["sensor.generator_state"] = "RUNNING";
-      await mqttConn.publish(
-        stateTopicOfMappingName(mqttPrefix, "sensor.generator_state"),
-        statesOut["sensor.generator_state"],
-        { retain: false }
-      );
-    }
-
-    return;
-  }
-
-  log.warn(`error state: ${JSON.stringify({ statesIn }, undefined, 4)}`);
-  if (statesOut["sensor.generator_state"] !== "ERROR") {
-    log.info(
-      `${"sensor.generator_state"} was: ${
-        statesOut["sensor.generator_state"]
-      }; publishing: ERROR`
-    );
-
-    statesOut["sensor.generator_state"] = "ERROR";
-    await mqttConn.publish(
-      stateTopicOfMappingName(mqttPrefix, "sensor.generator_state"),
-      statesOut["sensor.generator_state"],
-      { retain: false }
-    );
-  }
-};
-const updateMqttForeverOnInterval = (
-  mqttConn: Mqtt.AsyncMqttClient,
-  mqttPrefix: string,
-  statesIn: Partial<Record<StateInTopic, string>>,
-  intervalMs: number
-) => {
-  log.info(`Setting up forever mqtt updater`);
-  const statesOut: Partial<Record<MappingName, string>> = {};
-
-  const updateFn = (): void =>
-    void Promise.resolve()
-      .then(() => updateMqtt(mqttConn, mqttPrefix, statesIn, statesOut))
-      .then(async () => {
-        await wait(intervalMs);
-        process.nextTick(updateFn);
-      });
-
-  return updateFn();
 };
 
 const main = async () => {
-  const mqttPrefix = process.env.MQTT_PREFIX!;
-
-  log.info(`Connecting to mqtt via ${process.env.MQTT_URL!}`);
-  const mqttConn = await Mqtt.connectAsync(process.env.MQTT_URL!, {
+  log.info(`MQTT-Connect: ${config.mqtt.url!}`);
+  const mqttConn = await Mqtt.connectAsync(config.mqtt.url!, {
     will: {
-      topic: `${mqttPrefix}/status`,
+      topic: `generator2mqtt/status`,
       payload: "offline",
       qos: 0,
       retain: true,
     },
   });
-  await mqttConn.publish(`${mqttPrefix}/status`, "online", {
+  await mqttConn.publish(`generator2mqtt/status`, "online", {
     qos: 0,
     retain: true,
   });
 
-  log.info(`begin configuring HA`);
-  for (const mappingName of <Array<MappingName>>[
-    "sensor.generator_state",
-    "sensor.generator_fan_wattage",
-    "sensor.generator_voltage",
-  ]) {
-    const mapping = mappings[mappingName];
-    const topic = `homeassistant/${mapping.domain}/${mapping.unique_id}/config`;
-    const payload = JSON.stringify(
-      {
-        ...mapping.config,
-        name: mapping.name,
-        object_id: mapping.unique_id,
-        state_topic: stateTopicOfMappingName(mqttPrefix, mappingName),
-        unique_id: mapping.unique_id,
-      },
-      undefined,
-      4
+  const subscriptions: Record<string, Buffer | undefined> = {};
+  const published: Record<string, Buffer | undefined> = {};
+  const updateMqtt = async () => {
+    const toPublish: typeof published = {};
+
+    toPublish[`homeassistant/sensor/generator_voltage`] = Buffer.from(
+      JSON.stringify({
+        device: {
+          identifiers: ["predator3500"],
+          manufacturer: "Harbor Freight",
+          model: "Predator 3500",
+          name: "Generator",
+        },
+        device_class: "voltage",
+        entity_category: "diagnostic",
+        name: "Generator Voltage",
+        state_class: "measurement",
+        state_topic: `generator2mqtt/voltage`,
+        unique_id: "generator_voltage",
+        unit_of_measurement: "V",
+      })
     );
+    toPublish[`generator2mqtt/voltage`] =
+      subscriptions[`esphome/generator-plug/voltage`];
 
-    log.info(`configuring HA: ${topic}: ${payload}`);
-    await mqttConn.publish(topic, payload, { retain: true });
-  }
+    toPublish[`homeassistant/sensor/generator_fan_wattage`] = Buffer.from(
+      JSON.stringify({
+        device: {
+          identifiers: ["predator3500"],
+          manufacturer: "Harbor Freight",
+          model: "Predator 3500",
+          name: "Generator",
+        },
+        device_class: "power",
+        entity_category: "diagnostic",
+        name: "Generator Fan Wattage",
+        state_class: "measurement",
+        state_topic: `generator2mqtt/fan_wattage`,
+        unique_id: "generator_fan_wattage",
+        unit_of_measurement: "W",
+      })
+    );
+    toPublish[`generator2mqtt/fan_wattage`] =
+      subscriptions["esphome/generator-plug/wattage"];
 
-  log.info(`Set up statesIn and mqtt updater`);
-  const statesIn: Partial<Record<StateInTopic, string>> = {};
-  updateMqttForeverOnInterval(mqttConn, mqttPrefix, statesIn, 1_000);
+    toPublish[`homeassistant/sensor/generator_state`] = Buffer.from(
+      JSON.stringify({
+        device: {
+          identifiers: ["predator3500"],
+          manufacturer: "Harbor Freight",
+          model: "Predator 3500",
+          name: "Generator",
+        },
+        name: "Generator State",
+        state_topic: `generator2mqtt/state`,
+        unique_id: `generator_state`,
+      })
+    );
+    if (false) {
+    } else if (
+      subscriptions[`esphome/generator-plug/status`]?.toString("utf-8") !==
+        "online" ||
+      subscriptions[`esphome/generator-plug/voltage`] === undefined ||
+      subscriptions[`esphome/generator-plug/wattage`] === undefined
+    ) {
+      toPublish[`generator2mqtt/state`] = Buffer.from("OFF");
+    } else if (
+      subscriptions[`esphome/generator-plug/status`]?.toString("utf-8") ===
+        "online" &&
+      subscriptions[`esphome/generator-plug/voltage`] !== undefined &&
+      parseFloat(
+        subscriptions[`esphome/generator-plug/voltage`]?.toString("utf-8")
+      ) >= 110 &&
+      subscriptions[`esphome/generator-plug/wattage`] !== undefined &&
+      parseFloat(
+        subscriptions[`esphome/generator-plug/wattage`]?.toString("utf-8")
+      ) >= 50
+    ) {
+      toPublish[`generator2mqtt/state`] = Buffer.from("RUNNING");
+    } else {
+      log.warn(
+        `error state: ${JSON.stringify(
+          { statesIn: subscriptions },
+          undefined,
+          4
+        )}`
+      );
+      toPublish[`generator2mqtt/state`] = Buffer.from("ERROR");
+    }
+
+    for (const [topic, payload] of Object.entries(toPublish)) {
+      if (
+        Buffer.compare(
+          published[topic] ?? Buffer.from(""),
+          payload ?? Buffer.from("")
+        ) === 0
+      ) {
+        continue;
+      }
+
+      const from = (published[topic] ?? Buffer.from("")).toString("utf-8");
+      const to = (toPublish[topic] ?? Buffer.from("")).toString("utf-8");
+      log.info(`MQTT-Update: ${topic}: (${from}) -> (${to})`);
+
+      await mqttConn.publish(topic, payload ?? Buffer.from(""), {
+        qos: 0,
+        retain: true,
+      });
+      published[topic] = payload;
+    }
+
+    process.nextTick(updateMqtt);
+  };
 
   log.info(`set up mqtt onMessage`);
+  const subscriptionTopics = [
+    `esphome/generator-plug/status`,
+    `esphome/generator-plug/voltage`,
+    `esphome/generator-plug/wattage`,
+  ];
+  log.info(`MQTT-Subscribe: ${JSON.stringify(subscriptionTopics)}`);
+  await mqttConn.subscribe(subscriptionTopics);
+
   mqttConn.on("message", async (topic, payload, _packet) => {
-    if (stateInTopics.includes(topic as any)) {
-      statesIn[<StateInTopic>topic] = payload.toString("utf-8");
+    if (subscriptionTopics.includes(topic)) {
+      subscriptions[topic] = payload;
       return;
     }
 
     log.warn(`unrecognized topic: ${topic}:: ${payload.toString("utf-8")}`);
   });
-
-  log.info(`subscribe to: ${JSON.stringify(stateInTopics)}`);
-  await mqttConn.subscribe([...stateInTopics]);
 };
 
 main();
