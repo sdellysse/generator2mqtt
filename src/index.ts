@@ -103,17 +103,14 @@ const main = async () => {
       toPublish[`generator2mqtt/state`] = Buffer.from("RUNNING");
     } else {
       log.warn(
-        `error state: ${JSON.stringify(
-          { statesIn: subscriptions },
-          undefined,
-          4
-        )}`
+        `error state: ${JSON.stringify({ subscriptions }, undefined, 4)}`
       );
       toPublish[`generator2mqtt/state`] = Buffer.from("ERROR");
     }
 
     for (const [topic, payload] of Object.entries(toPublish)) {
       if (
+        topic in published &&
         Buffer.compare(
           published[topic] ?? Buffer.from(""),
           payload ?? Buffer.from("")
@@ -135,6 +132,7 @@ const main = async () => {
 
     process.nextTick(updateMqtt);
   };
+  void updateMqtt();
 
   log.info(`set up mqtt onMessage`);
   const subscriptionTopics = [
