@@ -1,5 +1,5 @@
 import Mqtt from "async-mqtt";
-import { log } from "./utils";
+import { log, wait } from "./utils";
 
 const config = {
   mqtt: {
@@ -7,8 +7,9 @@ const config = {
   },
 };
 
+
 const main = async () => {
-  log.info(`MQTT-Connect: ${config.mqtt.url!}`);
+  log.debug(`MQTT-Connect: ${config.mqtt.url!}`);
   const mqttConn = await Mqtt.connectAsync(config.mqtt.url!, {
     will: {
       topic: `generator2mqtt/status`,
@@ -27,86 +28,107 @@ const main = async () => {
   const updateMqtt = async () => {
     const toPublish: typeof published = {};
 
-    toPublish[`homeassistant/sensor/generator_voltage`] = Buffer.from(
-      JSON.stringify({
-        device: {
-          identifiers: ["predator3500"],
-          manufacturer: "Harbor Freight",
-          model: "Predator 3500",
-          name: "Generator",
+    toPublish[`homeassistant/sensor/generator_voltage/config`] = Buffer.from(
+      JSON.stringify(
+        {
+          device: {
+            identifiers: ["predator3500"],
+            manufacturer: "Harbor Freight",
+            model: "Predator 3500",
+            name: "Generator",
+          },
+          device_class: "voltage",
+          entity_category: "diagnostic",
+          name: "Generator Voltage",
+          state_class: "measurement",
+          state_topic: `generator2mqtt/voltage`,
+          unique_id: "generator_voltage",
+          unit_of_measurement: "V",
         },
-        device_class: "voltage",
-        entity_category: "diagnostic",
-        name: "Generator Voltage",
-        state_class: "measurement",
-        state_topic: `generator2mqtt/voltage`,
-        unique_id: "generator_voltage",
-        unit_of_measurement: "V",
-      })
+        undefined,
+        4
+      )
     );
     toPublish[`generator2mqtt/voltage`] =
       subscriptions[`esphome/generator-plug/voltage`];
 
-    toPublish[`homeassistant/sensor/generator_fan_wattage`] = Buffer.from(
-      JSON.stringify({
-        device: {
-          identifiers: ["predator3500"],
-          manufacturer: "Harbor Freight",
-          model: "Predator 3500",
-          name: "Generator",
-        },
-        device_class: "power",
-        entity_category: "diagnostic",
-        name: "Generator Fan Wattage",
-        state_class: "measurement",
-        state_topic: `generator2mqtt/fan_wattage`,
-        unique_id: "generator_fan_wattage",
-        unit_of_measurement: "W",
-      })
-    );
+    toPublish[`homeassistant/sensor/generator_fan_wattage/config`] =
+      Buffer.from(
+        JSON.stringify(
+          {
+            device: {
+              identifiers: ["predator3500"],
+              manufacturer: "Harbor Freight",
+              model: "Predator 3500",
+              name: "Generator",
+            },
+            device_class: "power",
+            entity_category: "diagnostic",
+            name: "Generator Fan Wattage",
+            state_class: "measurement",
+            state_topic: `generator2mqtt/fan_wattage`,
+            unique_id: "generator_fan_wattage",
+            unit_of_measurement: "W",
+          },
+          undefined,
+          4
+        )
+      );
     toPublish[`generator2mqtt/fan_wattage`] =
       subscriptions["esphome/generator-plug/wattage"];
 
-    toPublish[`homeassistant/sensor/generator_state`] = Buffer.from(
-      JSON.stringify({
-        device: {
-          identifiers: ["predator3500"],
-          manufacturer: "Harbor Freight",
-          model: "Predator 3500",
-          name: "Generator",
+    toPublish[`homeassistant/sensor/generator_state/config`] = Buffer.from(
+      JSON.stringify(
+        {
+          device: {
+            identifiers: ["predator3500"],
+            manufacturer: "Harbor Freight",
+            model: "Predator 3500",
+            name: "Generator",
+          },
+          name: "Generator State",
+          state_topic: `generator2mqtt/state`,
+          unique_id: `generator_state`,
         },
-        name: "Generator State",
-        state_topic: `generator2mqtt/state`,
-        unique_id: `generator_state`,
-      })
+        undefined,
+        4
+      )
     );
-    if (false) {
-    } else if (
-      subscriptions[`esphome/generator-plug/status`]?.toString("utf-8") !==
-        "online" ||
-      subscriptions[`esphome/generator-plug/voltage`] === undefined ||
-      subscriptions[`esphome/generator-plug/wattage`] === undefined
-    ) {
-      toPublish[`generator2mqtt/state`] = Buffer.from("OFF");
-    } else if (
-      subscriptions[`esphome/generator-plug/status`]?.toString("utf-8") ===
-        "online" &&
-      subscriptions[`esphome/generator-plug/voltage`] !== undefined &&
-      parseFloat(
-        subscriptions[`esphome/generator-plug/voltage`]?.toString("utf-8")
-      ) >= 110 &&
-      subscriptions[`esphome/generator-plug/wattage`] !== undefined &&
-      parseFloat(
-        subscriptions[`esphome/generator-plug/wattage`]?.toString("utf-8")
-      ) >= 50
-    ) {
-      toPublish[`generator2mqtt/state`] = Buffer.from("RUNNING");
-    } else {
+
+    (() => {
+      if (
+        subscriptions[`esphome/generator-plug/status`]?.toString("utf-8") !==
+          "online" ||
+        subscriptions[`esphome/generator-plug/voltage`] === undefined ||
+        subscriptions[`esphome/generator-plug/wattage`] === undefined
+      ) {
+        toPublish[`generator2mqtt/state`] = Buffer.from("OFF");
+        toPublish[`generator2mqtt/voltage`] = undefined;
+        toPublish[`generator2mqtt/fan_wattage`] = undefined;
+        return;
+      }
+
+      if (
+        subscriptions[`esphome/generator-plug/status`]?.toString("utf-8") ===
+          "online" &&
+        subscriptions[`esphome/generator-plug/voltage`] !== undefined &&
+        parseFloat(
+          subscriptions[`esphome/generator-plug/voltage`]?.toString("utf-8")
+        ) >= 110 &&
+        subscriptions[`esphome/generator-plug/wattage`] !== undefined &&
+        parseFloat(
+          subscriptions[`esphome/generator-plug/wattage`]?.toString("utf-8")
+        ) >= 50
+      ) {
+        toPublish[`generator2mqtt/state`] = Buffer.from("RUNNING");
+        return;
+      }
+
       log.warn(
         `error state: ${JSON.stringify({ subscriptions }, undefined, 4)}`
       );
       toPublish[`generator2mqtt/state`] = Buffer.from("ERROR");
-    }
+    })();
 
     for (const [topic, payload] of Object.entries(toPublish)) {
       if (
@@ -130,27 +152,23 @@ const main = async () => {
       published[topic] = payload;
     }
 
-    process.nextTick(updateMqtt);
+    setTimeout(updateMqtt, 0);
   };
   void updateMqtt();
 
   log.info(`set up mqtt onMessage`);
+  mqttConn.on("message", (topic, payload, _packet) => {
+    log.debug(`MQTT-OnMessage: ${topic}:: ${payload}`);
+    subscriptions[topic] = payload;
+  });
+
   const subscriptionTopics = [
     `esphome/generator-plug/status`,
     `esphome/generator-plug/voltage`,
     `esphome/generator-plug/wattage`,
   ];
-  log.info(`MQTT-Subscribe: ${JSON.stringify(subscriptionTopics)}`);
+  log.debug(`MQTT-Subscribe: ${JSON.stringify(subscriptionTopics)}`);
   await mqttConn.subscribe(subscriptionTopics);
-
-  mqttConn.on("message", async (topic, payload, _packet) => {
-    if (subscriptionTopics.includes(topic)) {
-      subscriptions[topic] = payload;
-      return;
-    }
-
-    log.warn(`unrecognized topic: ${topic}:: ${payload.toString("utf-8")}`);
-  });
 };
 
 main();
